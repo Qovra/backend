@@ -27,13 +27,13 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go build -ldflags="-s -w" \
-            -o qovra-daemon-linux-${{ matrix.goarch }} .
+            -o qovra-backend-linux-${{ matrix.goarch }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qovra-daemon-linux-${{ matrix.goarch }}
-          path: qovra-daemon-linux-${{ matrix.goarch }}
+          name: qovra-backend-linux-${{ matrix.goarch }}
+          path: qovra-backend-linux-${{ matrix.goarch }}
 
   release:
     name: Publish Release
@@ -54,5 +54,5 @@ jobs:
           name: ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            qovra-daemon-linux-amd64
-            qovra-daemon-linux-arm64
+            qovra-backend-linux-amd64
+            qovra-backend-linux-arm64
