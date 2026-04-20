@@ -49,6 +49,12 @@ func Init(ctx context.Context) error {
 			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='servers' AND column_name='install_progress') THEN
 				ALTER TABLE servers ADD COLUMN install_progress INTEGER NOT NULL DEFAULT 0;
 			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='servers' AND column_name='auth_url') THEN
+				ALTER TABLE servers ADD COLUMN auth_url TEXT;
+			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='servers' AND column_name='auth_code') THEN
+				ALTER TABLE servers ADD COLUMN auth_code VARCHAR(50);
+			END IF;
 			IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_hostname_per_node') THEN
 				ALTER TABLE servers ADD CONSTRAINT unique_hostname_per_node UNIQUE (node_id, hostname);
 			END IF;

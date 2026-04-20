@@ -97,6 +97,7 @@ func HandleCreateServer(w http.ResponseWriter, r *http.Request) {
 
 	daemonReqBody, _ := json.Marshal(map[string]any{
 		"id":          newServerID,
+		"name":        req.Name,
 		"server_type": req.ServerType,
 		"hostname":    req.Hostname,
 		"port":        port,
@@ -145,6 +146,8 @@ type ServerResponse struct {
 	ServerType      string `json:"server_type"`
 	Installing      bool   `json:"installing"`
 	InstallProgress int    `json:"install_progress"`
+	AuthURL         string `json:"auth_url,omitempty"`
+	AuthCode        string `json:"auth_code,omitempty"`
 	Port            int    `json:"port"`
 	Status          string `json:"status"`
 	RAM             int    `json:"ram_mb"`
@@ -158,7 +161,7 @@ func HandleListServers(w http.ResponseWriter, r *http.Request) {
 	user := r.Context().Value(userContextKey).(SessionUser)
 
 	baseQuery := `
-		SELECT s.id, s.name, s.hostname, s.server_type, s.installing, s.install_progress, s.port, s.status, s.ram_mb, n.ip, n.daemon_port
+		SELECT s.id, s.name, s.hostname, s.server_type, s.installing, s.install_progress, s.auth_url, s.auth_code, s.port, s.status, s.ram_mb, n.ip, n.daemon_port
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 	`
@@ -189,10 +192,13 @@ func HandleListServers(w http.ResponseWriter, r *http.Request) {
 	token := os.Getenv("DAEMON_API_TOKEN")
 	for pgRows.Next() {
 		var s ServerResponse
+		var authURL, authCode *string
 		err := pgRows.Scan(
 			&s.ID, &s.Name, &s.Hostname, &s.ServerType, &s.Installing, &s.InstallProgress, 
-			&s.Port, &s.Status, &s.RAM, &s.NodeIP, &s.DaemonPort,
+			&authURL, &authCode, &s.Port, &s.Status, &s.RAM, &s.NodeIP, &s.DaemonPort,
 		)
+		if authURL != nil { s.AuthURL = *authURL }
+		if authCode != nil { s.AuthCode = *authCode }
 		if err != nil {
 			log.Printf("[api] Scan error in HandleListServers: %v", err)
 			continue

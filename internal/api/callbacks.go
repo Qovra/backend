@@ -13,6 +13,8 @@ type ProgressRequest struct {
 	Progress   int    `json:"progress"`
 	Installing bool   `json:"installing"`
 	Status     string `json:"status"`
+	AuthURL    string `json:"auth_url,omitempty"`
+	AuthCode   string `json:"auth_code,omitempty"`
 }
 
 // HandleUpdateProgress is an internal endpoint where Daemons report installation progress.
@@ -46,8 +48,13 @@ func HandleUpdateProgress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Update DB
-	query := `UPDATE servers SET install_progress = $1, installing = $2, status = $3, updated_at = NOW() WHERE id = $4`
-	_, err := database.Pool.Exec(r.Context(), query, req.Progress, req.Installing, req.Status, serverID)
+	query := `
+		UPDATE servers 
+		SET install_progress = $1, installing = $2, status = $3, 
+		    auth_url = $4, auth_code = $5, updated_at = NOW() 
+		WHERE id = $6
+	`
+	_, err := database.Pool.Exec(r.Context(), query, req.Progress, req.Installing, req.Status, req.AuthURL, req.AuthCode, serverID)
 	if err != nil {
 		http.Error(w, "DB update failed", http.StatusInternalServerError)
 		return
