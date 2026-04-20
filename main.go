@@ -43,6 +43,7 @@ func main() {
 	mux.HandleFunc("/api/nodes/create", api.RequireRole([]string{"admin", "staff"}, api.HandleCreateNode))
 	mux.HandleFunc("/api/overview/stats", api.WithAuth(api.HandleGetMasterStats))
 	mux.HandleFunc("/api/node/master/action", api.WithAuth(api.HandleMasterProxyAction))
+	mux.HandleFunc("/api/node/cli-auth", api.RequireRole([]string{"admin", "staff"}, api.HandleNodeCLIAuth))
 
 	// Servers Creation triggers node HTTP payloads natively
 	mux.HandleFunc("/api/servers/create", api.RequireRole([]string{"admin", "staff"}, api.HandleCreateServer))

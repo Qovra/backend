@@ -3,7 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 
 	"github.com/Qovra/hytale-backend/internal/database"
 )
@@ -83,4 +86,46 @@ func HandleCreateNode(w http.ResponseWriter, r *http.Request) {
 		"message": "Node successfully created",
 		"id":      newID,
 	})
+}
+
+// HandleNodeCLIAuth proxies the auth request to the daemon
+func HandleNodeCLIAuth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	nodeID := r.URL.Query().Get("id")
+	if nodeID == "" {
+		http.Error(w, "Missing node id", http.StatusBadRequest)
+		return
+	}
+
+	var nodeIP string
+	var daemonPort int
+	err := database.Pool.QueryRow(context.Background(), 
+		"SELECT ip, daemon_port FROM nodes WHERE id = $1", nodeID).Scan(&nodeIP, &daemonPort)
+	
+	if err != nil {
+		http.Error(w, "Node not found", http.StatusNotFound)
+		return
+	}
+
+	daemonURL := fmt.Sprintf("http://%s:%d/api/node/cli-auth", nodeIP, daemonPort)
+	req, _ := http.NewRequest("POST", daemonURL, nil)
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("DAEMON_API_TOKEN"))
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to connect to node daemon", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	for k, v := range resp.Header {
+		w.Header()[k] = v
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
