@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 
@@ -15,6 +14,13 @@ import (
 )
 
 var httpClient = &http.Client{}
+
+func getDaemonIP(nodeIP string) string {
+	if nodeIP == os.Getenv("NODE_IP") {
+		return "127.0.0.1"
+	}
+	return nodeIP
+}
 
 type CreateServerBackendReq struct {
 	NodeID     string `json:"node_id"`
@@ -82,7 +88,7 @@ func HandleCreateServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4. Command the physical daemon over HTTP
-	daemonURL := fmt.Sprintf("http://%s:%d/api/servers/create", nodeIP, daemonPort)
+	daemonURL := fmt.Sprintf("http://%s:%d/api/servers/create", getDaemonIP(nodeIP), daemonPort)
 	
 	baseConfig := `{
 		"listen": ":` + fmt.Sprint(port) + `",
@@ -117,7 +123,7 @@ func HandleCreateServer(w http.ResponseWriter, r *http.Request) {
 	// 6. If it's a game server, trigger installation
 	if req.ServerType == "game" {
 		go func() {
-			installURL := fmt.Sprintf("http://%s:%d/api/servers/install?id=%s", nodeIP, daemonPort, newServerID)
+			installURL := fmt.Sprintf("http://%s:%d/api/servers/install?id=%s", getDaemonIP(nodeIP), daemonPort, newServerID)
 			reqInst, _ := http.NewRequest("POST", installURL, nil)
 			reqInst.Header.Set("Authorization", "Bearer "+os.Getenv("DAEMON_API_TOKEN"))
 			httpClient.Do(reqInst)
@@ -201,7 +207,7 @@ func HandleListServers(w http.ResponseWriter, r *http.Request) {
 
 // NotifyDaemonSync tells a node to regenerate its Master Proxy routing table.
 func NotifyDaemonSync(nodeID, nodeIP string, daemonPort int) {
-	daemonURL := fmt.Sprintf("http://%s:%d/api/node/sync-routes", nodeIP, daemonPort)
+	daemonURL := fmt.Sprintf("http://%s:%d/api/node/sync-routes", getDaemonIP(nodeIP), daemonPort)
 	httpClient := &http.Client{}
 	req, _ := http.NewRequest("POST", daemonURL, nil)
 	req.Header.Set("Authorization", "Bearer "+os.Getenv("DAEMON_API_TOKEN"))
@@ -248,7 +254,7 @@ func HandleDeleteServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Terminate files physically on physical Machine
-	daemonURL := fmt.Sprintf("http://%s:%d/api/servers/delete?id=%s", nodeIP, daemonPort, serverID)
+	daemonURL := fmt.Sprintf("http://%s:%d/api/servers/delete?id=%s", getDaemonIP(nodeIP), daemonPort, serverID)
 	httpClient := &http.Client{}
 	reqProxy, _ := http.NewRequest(http.MethodDelete, daemonURL, nil)
 	reqProxy.Header.Set("Authorization", "Bearer "+os.Getenv("DAEMON_API_TOKEN"))
@@ -294,7 +300,7 @@ func ForwardNodeAction(action string) http.HandlerFunc {
 			return
 		}
 
-		daemonURL := fmt.Sprintf("http://%s:%d/api/servers/%s?id=%s", nodeIP, daemonPort, action, serverID)
+		daemonURL := fmt.Sprintf("http://%s:%d/api/servers/%s?id=%s", getDaemonIP(nodeIP), daemonPort, action, serverID)
 		
 		httpClient := &http.Client{}
 		reqProxy, _ := http.NewRequest(r.Method, daemonURL, nil)
@@ -325,22 +331,30 @@ func HandleGetMasterStats(w http.ResponseWriter, r *http.Request) {
 	
 	masterStatus := "offline"
 	if err == nil {
-		statusURL := fmt.Sprintf("http://%s:%d/api/node/master/status", nodeIP, daemonPort)
+		statusURL := fmt.Sprintf("http://%s:%d/api/node/master/status", getDaemonIP(nodeIP), daemonPort)
 		req, _ := http.NewRequest("GET", statusURL, nil)
 		req.Header.Set("Authorization", "Bearer "+os.Getenv("DAEMON_API_TOKEN"))
 		resp, err := httpClient.Do(req)
 		if err == nil && resp.StatusCode == 200 {
 			var dStatus map[string]any
 			json.NewDecoder(resp.Body).Decode(&dStatus)
-			masterStatus = dStatus["actual_state"].(string)
+			if state, ok := dStatus["actual_state"].(string); ok {
+				masterStatus = state
+			}
+		} else if err != nil {
+			log.Printf("[api] Error fetching master proxy status from node %s:%d - %v", nodeIP, daemonPort, err)
+		} else {
+			log.Printf("[api] Fetching master proxy status from node %s:%d returned status %d", nodeIP, daemonPort, resp.StatusCode)
 		}
+	} else {
+		log.Printf("[api] No online nodes found to fetch master proxy status")
 	}
 
 	// 2. Aggregate stats
 	stats := map[string]any{
 		"master_status":     masterStatus,
-		"active_players":    rand.Intn(100) + 20,
-		"global_bandwidth":  fmt.Sprintf("%d Mbps", rand.Intn(500)+100),
+		"active_players":    0,
+		"global_bandwidth":  "0 Mbps",
 		"ingress_port":      5520,
 		"hot_reload_status": "synced",
 	}
@@ -384,7 +398,7 @@ func HandleMasterProxyAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	daemonToken := os.Getenv("DAEMON_API_TOKEN")
-	targetURL := fmt.Sprintf("http://%s:%d/api/node/master/action?action=%s", nodeIP, daemonPort, action)
+	targetURL := fmt.Sprintf("http://%s:%d/api/node/master/action?action=%s", getDaemonIP(nodeIP), daemonPort, action)
 
 	req, _ := http.NewRequest("POST", targetURL, nil)
 	req.Header.Set("Authorization", "Bearer "+daemonToken)
