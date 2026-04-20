@@ -53,7 +53,11 @@ func WithAuth(next http.HandlerFunc) http.HandlerFunc {
 		})
 
 		if err != nil || !parsedToken.Valid {
-			log.Printf("[auth] JWT parse failed for token %s...: %v", token[:10], err)
+			logStr := token
+			if len(token) > 10 {
+				logStr = token[:10] + "..."
+			}
+			log.Printf("[auth] JWT parse failed for token %s: %v", logStr, err)
 			http.Error(w, "Invalid or expired JWT token", http.StatusUnauthorized)
 			return
 		}
