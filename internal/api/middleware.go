@@ -31,6 +31,12 @@ func WithAuth(next http.HandlerFunc) http.HandlerFunc {
 
 		token := r.Header.Get("Authorization")
 		if token == "" {
+			// Fallback to query param for SSE / WebSocket connections that can't set headers
+			if qp := r.URL.Query().Get("token"); qp != "" {
+				token = "Bearer " + qp
+			}
+		}
+		if token == "" {
 			http.Error(w, "Missing Authorization Header", http.StatusUnauthorized)
 			return
 		}
