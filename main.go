@@ -56,6 +56,10 @@ func main() {
 	mux.HandleFunc("/api/servers/stop", api.WithAuth(api.ForwardNodeAction("stop")))
 	mux.HandleFunc("/api/servers/restart", api.WithAuth(api.ForwardNodeAction("restart")))
 	mux.HandleFunc("/api/servers/logs", api.WithAuth(api.ForwardNodeAction("logs")))
+	mux.HandleFunc("/api/servers/command", api.WithAuth(api.ForwardNodeAction("command")))
+
+	// System Logs (SSE via journalctl)
+	mux.HandleFunc("/api/logs/", api.WithAuth(api.HandleStreamLogs))
 
 	// ── Static Panel (React SPA) ──────────────────────────────────────────────
 	// Reads PANEL_DIST_PATH from .env; falls back to /opt/qovra/panel/dist.
