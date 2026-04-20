@@ -8,6 +8,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 
 	"github.com/Qovra/hytale-backend/internal/database"
@@ -31,7 +33,7 @@ type CreateServerBackendReq struct {
 	Version    string `json:"version"`
 }
 
-// HandleCreateServer orchestrates assigning a server to a customer 
+// HandleCreateServer orchestrates assigning a server to a customer
 // and physically building it on the target Node's daemon.
 func HandleCreateServer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -55,7 +57,7 @@ func HandleCreateServer(w http.ResponseWriter, r *http.Request) {
 	var nodeRAM, nodeStatus string
 	err := database.Pool.QueryRow(ctx, "SELECT ip, daemon_port, ram_total_mb, status FROM nodes WHERE id = $1", req.NodeID).
 		Scan(&nodeIP, &daemonPort, &nodeRAM, &nodeStatus)
-	
+
 	if err != nil {
 		http.Error(w, "Node does not exist", http.StatusNotFound)
 		return
@@ -81,7 +83,7 @@ func HandleCreateServer(w http.ResponseWriter, r *http.Request) {
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'installing', '{}') RETURNING id
 	`
 	err = database.Pool.QueryRow(ctx, query, req.NodeID, user.ID, req.Name, req.Hostname, req.ServerType, port, req.RAM, req.Version).Scan(&newServerID)
-	
+
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to provision DB record. Hostname might be taken. Err: %v", err), http.StatusConflict)
 		return
@@ -89,7 +91,7 @@ func HandleCreateServer(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Command the physical daemon over HTTP
 	daemonURL := fmt.Sprintf("http://%s:%d/api/servers/create", getDaemonIP(nodeIP), daemonPort)
-	
+
 	baseConfig := `{
 		"listen": ":` + fmt.Sprint(port) + `",
 		"handlers": [ { "type": "forwarder" } ]
@@ -165,7 +167,7 @@ func HandleListServers(w http.ResponseWriter, r *http.Request) {
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 	`
-	
+
 	var rows interface{}
 	var err error
 
@@ -180,8 +182,8 @@ func HandleListServers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
-	
-	pgRows := rows.(interface{
+
+	pgRows := rows.(interface {
 		Next() bool
 		Scan(...any) error
 		Close()
@@ -194,11 +196,15 @@ func HandleListServers(w http.ResponseWriter, r *http.Request) {
 		var s ServerResponse
 		var authURL, authCode *string
 		err := pgRows.Scan(
-			&s.ID, &s.Name, &s.Hostname, &s.ServerType, &s.Installing, &s.InstallProgress, 
+			&s.ID, &s.Name, &s.Hostname, &s.ServerType, &s.Installing, &s.InstallProgress,
 			&authURL, &authCode, &s.Port, &s.Status, &s.RAM, &s.NodeIP, &s.DaemonPort,
 		)
-		if authURL != nil { s.AuthURL = *authURL }
-		if authCode != nil { s.AuthCode = *authCode }
+		if authURL != nil {
+			s.AuthURL = *authURL
+		}
+		if authCode != nil {
+			s.AuthCode = *authCode
+		}
 		if err != nil {
 			log.Printf("[api] Scan error in HandleListServers: %v", err)
 			continue
@@ -217,7 +223,7 @@ func NotifyDaemonSync(nodeID, nodeIP string, daemonPort int) {
 	httpClient := &http.Client{}
 	req, _ := http.NewRequest("POST", daemonURL, nil)
 	req.Header.Set("Authorization", "Bearer "+os.Getenv("DAEMON_API_TOKEN"))
-	
+
 	resp, err := httpClient.Do(req)
 	if err == nil && resp != nil {
 		resp.Body.Close()
@@ -248,7 +254,7 @@ func HandleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		FROM servers s 
 		JOIN nodes n ON s.node_id = n.id 
 		WHERE s.id = $1`, serverID).Scan(&ownerID, &nodeIP, &daemonPort)
-	
+
 	if err != nil {
 		http.Error(w, "Server mapping to Node failed", http.StatusNotFound)
 		return
@@ -264,7 +270,7 @@ func HandleDeleteServer(w http.ResponseWriter, r *http.Request) {
 	httpClient := &http.Client{}
 	reqProxy, _ := http.NewRequest(http.MethodDelete, daemonURL, nil)
 	reqProxy.Header.Set("Authorization", "Bearer "+os.Getenv("DAEMON_API_TOKEN"))
-	
+
 	resp, reqErr := httpClient.Do(reqProxy)
 	if reqErr == nil && resp != nil {
 		resp.Body.Close()
@@ -281,7 +287,7 @@ func HandleDeleteServer(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"message": "Server permanently deleted"}`))
 }
 
-// ForwardNodeAction relays the stop, start, restart, status and logs endpoints directly to the physical daemon matching the ServerID.
+// ForwardNodeAction relays the stop, start, restart, status, logs, console and command endpoints directly to the physical daemon matching the ServerID.
 func ForwardNodeAction(action string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		serverID := r.URL.Query().Get("id")
@@ -300,30 +306,30 @@ func ForwardNodeAction(action string) http.HandlerFunc {
 			FROM servers s 
 			JOIN nodes n ON s.node_id = n.id 
 			WHERE s.id = $1`, serverID).Scan(&nodeIP, &daemonPort)
-		
+
 		if err != nil {
 			http.Error(w, "Server mapping to Node failed", http.StatusNotFound)
 			return
 		}
 
-		daemonURL := fmt.Sprintf("http://%s:%d/api/servers/%s?id=%s", getDaemonIP(nodeIP), daemonPort, action, serverID)
-		
-		httpClient := &http.Client{}
-		reqProxy, _ := http.NewRequest(r.Method, daemonURL, nil)
-		reqProxy.Header.Set("Authorization", "Bearer "+os.Getenv("DAEMON_API_TOKEN"))
+		targetURL, _ := url.Parse(fmt.Sprintf("http://%s:%d", getDaemonIP(nodeIP), daemonPort))
 
-		resp, err := httpClient.Do(reqProxy)
-		if err != nil {
-			http.Error(w, "Node Daemon unreachable", http.StatusBadGateway)
-			return
-		}
-		defer resp.Body.Close()
+		proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
-		for k, v := range resp.Header {
-			w.Header()[k] = v
+		// Modify the request before it is sent to the daemon
+		originalDirector := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			originalDirector(req)
+			// Route to the explicit action on the daemon API
+			req.URL.Path = "/api/servers/" + action
+			// Inject Daemon auth token correctly so websocket upgrades and normal requests pass
+			req.Header.Set("Authorization", "Bearer "+os.Getenv("DAEMON_API_TOKEN"))
 		}
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+
+		// Silence std logger on proxy disconnects (expected for websockets sometimes)
+		proxy.ErrorLog = log.New(io.Discard, "", 0)
+
+		proxy.ServeHTTP(w, r)
 	}
 }
 
@@ -332,9 +338,9 @@ func HandleGetMasterStats(w http.ResponseWriter, r *http.Request) {
 	// 1. Get first online node to check master proxy status
 	var nodeIP string
 	var daemonPort int
-	err := database.Pool.QueryRow(context.Background(), 
+	err := database.Pool.QueryRow(context.Background(),
 		"SELECT ip, daemon_port FROM nodes WHERE status = 'online' LIMIT 1").Scan(&nodeIP, &daemonPort)
-	
+
 	masterStatus := "offline"
 	if err == nil {
 		statusURL := fmt.Sprintf("http://%s:%d/api/node/master/status", getDaemonIP(nodeIP), daemonPort)
@@ -377,7 +383,7 @@ func HandleMasterProxyAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nodeID := r.URL.Query().Get("node_id") // Optional, defaults to first node if empty
-	action := r.URL.Query().Get("action") // start, stop, restart
+	action := r.URL.Query().Get("action")  // start, stop, restart
 
 	if action == "" {
 		http.Error(w, "missing action", http.StatusBadRequest)
@@ -390,11 +396,11 @@ func HandleMasterProxyAction(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if nodeID != "" {
-		err = database.Pool.QueryRow(context.Background(), 
+		err = database.Pool.QueryRow(context.Background(),
 			"SELECT ip, daemon_port FROM nodes WHERE id = $1", nodeID).Scan(&nodeIP, &daemonPort)
 	} else {
 		// Just pick the first online node for simplicity if no ID provided (Master Proxy context)
-		err = database.Pool.QueryRow(context.Background(), 
+		err = database.Pool.QueryRow(context.Background(),
 			"SELECT ip, daemon_port FROM nodes WHERE status = 'online' LIMIT 1").Scan(&nodeIP, &daemonPort)
 	}
 
@@ -419,4 +425,3 @@ func HandleMasterProxyAction(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
-
